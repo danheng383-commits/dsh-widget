@@ -13,6 +13,14 @@
     "mascot"
   ],
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danheng383-commits/dsh-widget.git"
+  },
+  "homepage": "https://github.com/danheng383-commits/dsh-widget#readme",
+  "bugs": {
+    "url": "https://github.com/danheng383-commits/dsh-widget/issues"
+  },
   "exports": {
     ".": "./index.js",
     "./locale/*.json": "./locale/*.json",

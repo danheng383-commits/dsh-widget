@@ -25,7 +25,7 @@ DSH 会话的任务进度**。关掉 DSH 窗口（甚至整个 DSH 程序）之�
 ## 结构
 
 ```text
-dsh-fat-fish-widget/
+dsh-widget/
 ├── package.json                  # bundle 元数据
 ├── cordis.patch.yml              # 挂载行：id dsh-fat-fish-widget
 ├── index.js                      # Host：进度折叠 + 状态落盘 + 拉起桌面挂件
