@@ -23,6 +23,7 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.png",
+    "screenshots.json",
     "README.md",
     "desktop/FatFishDesktop.ps1",
     "desktop/strings.json",
