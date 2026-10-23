@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Fat Fish desktop widget",
+    "description": "An always-on-top fish mascot that lives on the Windows desktop and mirrors the current session's live turn, step, running tool, todo completion, background jobs, goal and team tasks. Drag to move, click to expand, and it keeps floating after the DSH window is closed."
+  }
+}

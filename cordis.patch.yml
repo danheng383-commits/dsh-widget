@@ -1,0 +1,6 @@
+# Bundle patch: inserts the floating 大肥鱼 task-progress widget.
+# The Host half is this package's `index.js`; the Client half is discovered from
+# the `dsh.client` section of package.json and registers into `shell.overlay`.
+- insert:
+    - id: dsh-fat-fish-widget
+      name: '@local/dsh-fat-fish-widget'

@@ -1,0 +1,196 @@
+# 大肥鱼桌面挂件（Fat Fish desktop widget）
+
+一只真正**悬浮在 Windows 桌面上**的鱼娘：始终置顶、透明背景、可拖拽，**实时显示当前
+DSH 会话的任务进度**。关掉 DSH 窗口（甚至整个 DSH 程序）之后，鱼还留在桌面上。
+
+- 🐟 **桌面级置顶**：独立的 WinForms 分层窗口（per-pixel alpha），浮在所有应用之上，
+  不属于 DSH 窗口，所以窗口最小化/关闭都不会带走它。
+- 📊 **实时进度**：Host 每 0.8 秒把「最近活跃会话」的进度写成一个小 JSON，挂件读它，
+  显示阶段（排队 / 思考 / 输出 / 执行工具 / 完成 / 出错）、轮次、步骤、工具次数、用时。
+- 🔧 **正在做什么**：当前工具名 + 目标（`grep`、`pwsh`、`todo_write`… 有中文别名）。
+- ☑️ **任务清单**：todo 完成度百分比、进度条与逐条清单（✓ / ◐ / ○）。
+- ⚙️ **更多上下文**：后台任务、会话目标（第 n/m 轮）、团队任务，以及其它正在跑的会话数。
+- 🖱 **交互**：拖动整只鱼换位置；点一下鱼在「气泡」和「详情面板」之间切换；右键菜单可
+  展开/收起、改大小（小/中/大）、归位、退出。位置与状态记在
+  `%LOCALAPPDATA%\dsh-fat-fish\widget.json`。
+- 🌙 **关掉 DSH 后**：超过 7 秒没有新数据，气泡会变成「DSH 未运行 / 大肥鱼在桌面上等你
+  回来」，鱼继续待在桌面上；DSH 再启动就会自动接上。
+- 🔔 **审批提醒**：DSH 需要你审批时，气泡变琥珀色「需要你审批」，鱼上挂 `!` 角标、响提示音，
+  点卡片直接把 DSH 窗口提到最前；处理完闪 6 秒「已允许 / 已拒绝」。
+
+| 干活中 | 需要你审批 | 已允许 | 展开面板 |
+| --- | --- | --- | --- |
+| ![progress](docs/preview-progress.png) | ![approval](docs/preview-approval.png) | ![allowed](docs/preview-allowed.png) | ![expanded](docs/preview-expanded.png) |
+
+## 结构
+
+```text
+dsh-fat-fish-widget/
+├── package.json                  # bundle 元数据
+├── cordis.patch.yml              # 挂载行：id dsh-fat-fish-widget
+├── index.js                      # Host：进度折叠 + 状态落盘 + 拉起桌面挂件
+├── desktop/
+│   ├── FatFishDesktop.ps1        # 桌面挂件（Windows PowerShell 5.1，纯 ASCII 源码）
+│   ├── strings.json              # 全部中文文案（脚本按 UTF-8 读，避免代码页问题）
+│   ├── fish.png                  # 透明抠图
+│   ├── launch-widget.vbs         # 静默启动器（无黑框，可放启动文件夹）
+│   ├── install-autostart.ps1     # 注册开机自启
+│   └── uninstall-autostart.ps1   # 取消开机自启
+├── assets/                       # 原图与抠图源文件
+├── icon.png                      # 插件列表图标
+├── locale/{zh,en}.json           # 插件管理里的标题与描述
+└── legacy/                       # 旧版「界面内悬浮层」实现，已停用，仅留档
+```
+
+## 数据怎么流动
+
+```text
+DSH Host (index.js)
+  ├─ session/event、agent/status  →  折叠出 progress / approvals
+  ├─ 事件后 120ms 补写 + 800ms 心跳原子写 state.json  →  %LOCALAPPDATA%\dsh-fat-fish\state.json
+  ├─ 启动时拉起桌面挂件（单选实例，重复拉不会重复开）
+  └─ GET /api/fat-fish/progress    （调试用，需浏览器认证）
+
+桌面挂件 (FatFishDesktop.ps1)
+  └─ 每 180ms 读 state.json → 画在置顶透明窗口上
+```
+
+`state.json` 就是路由响应体加一个 `writtenAt`（毫秒时间戳），挂件靠它判断数据是否新鲜。
+
+```jsonc
+{
+  "ok": true, "v": 1, "now": 0, "version": "0.3.2", "writtenAt": 0,
+  "counts": { "live": 1, "running": 1 },
+  "approvals": [{
+    "id": "approval-1", "sessionId": "session-1", "sessionTitle": "…",
+    "toolName": "plugin_manager", "reason": "…", "target": "…", "at": 0
+  }],
+  "lastApproval": {
+    "id": "approval-1", "sessionId": "session-1", "sessionTitle": "…",
+    "toolName": "plugin_manager", "outcome": "allowed-once", "at": 0
+  },
+  "sessions": [{
+    "id": "session-1", "title": "…", "cwd": null,
+    "running": true, "phase": "tool",
+    "turn": 3, "step": 7, "turnStartedAt": 0, "elapsedMs": 12345, "lastEventAt": 0,
+    "currentTool": { "name": "grep", "target": "…", "startedAt": 0 },
+    "counts": { "tools": 12, "errors": 0, "steps": 7 },
+    "todos": [{ "content": "…", "status": "in_progress" }],
+    "todoProgress": { "done": 2, "total": 5 },
+    "jobs": [{ "id": "bash-1", "label": "…", "status": "running", "progress": null, "startedAt": 0 }],
+    "goal": null,
+    "teamTasks": null
+  }]
+}
+```
+
+## 使用
+
+- **无底色贴桌面**：素材是透明 PNG（`desktop/fish.png`），鱼身上没有白色圆盘/描边，
+  收起时就是「一张气泡 + 一只鱼」。
+- **拖动**：按住鱼拖到任意位置（虚拟屏幕范围内，自动记住）。
+- **展开/收起**：单击鱼；或右键 → 展开详情 / 收起。
+- **大小**：右键 → 大小 → 小 / 中 / 大。
+  三档之上还有一层全局缩放 `$script:UiScale`（`desktop/FatFishDesktop.ps1` 里，默认 `1.12`）：
+  几何走 `U()`、字号乘同一个系数，卡片、鱼和文字一起等比放大，不会出现「字小框大」。
+  改完重启挂件生效（右键 → 退出，再双击 `desktop\launch-widget.vbs`）。
+- **归位**：右键 → 回到默认位置（右下角，避开 `dsh-whale-widget` 的鲸鱼）。
+- **退出**：右键 → 退出；或结束进程 `powershell.exe`（窗口标题 `FatFishDesktop`）。
+- **开机自启**：`desktop\install-autostart.ps1` 会在
+  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\FatFishDesktop.lnk` 建一个
+  启动项（本机已装好），取消用 `desktop\uninstall-autostart.ps1`。有它之后即使不开 DSH，
+  登录桌面也能看到鱼（显示「DSH 未运行」）。
+- **立刻启动**：双击 `desktop\launch-widget.vbs`（无黑框）。
+
+## 审批提醒
+
+DSH 把审批请求作为可持久化的会话事件写进日志（`approval/asked` / `approval/decided`），
+Host 直接读这两类事件，**不拦截 `approval/request` 瀑布**（拦截会碰到审批链路，风险高）。
+
+- 有待审批项时：气泡变成琥珀色卡片，标题「需要你审批」，下面一行是工具 + 原因
+  （多个待处理会显示「还有 N 项待处理」）；如果收起，卡片就是弹窗本身。
+- 鱼右上角挂一个 **「!」琥珀色角标**（不再套光环/圆圈，鱼是直接贴在桌面上的）。
+- 展开时会在面板顶部插入一块「等待你审批」的提示区，进度条暂时让位给轮次/步数信息。
+- **点这张卡片 = 把 DSH 窗口提到最前**，直接去点「允许/拒绝」，不用自己找窗口。
+- 新审批出现时播一次系统提示音；右键菜单里的「审批提示音」可以关掉
+  （持久化在 `widget.json` 的 `alertSound`）。
+- **审批有结果时会闪 6 秒确认**：`approval/decided` 的 `outcome` 映射成
+  「已允许 / 已拒绝 / 已取消 / 审批未完成」，面板标题和气泡变对应颜色，鱼上角标换成
+  ✓ / ✗ / —，这样你能知道刚才那一下点的是允许还是拒绝。
+- 卡片、角标随即消失；回合结束或 DSH 停止写入时也会自动清掉，不会留一个假的「等你审批」。
+
+## 安装插件
+
+用当前 profile 的 `plugin_manager` 安装本目录（`install_bundle`，target 为本目录绝对
+路径）。安装后 Host 半区会在 1.5 秒内自动拉起桌面挂件；DSH 重启后也会重新拉起（挂件
+自带单实例互斥锁，不会叠出两只鱼）。
+
+拉起动作走 `desktop\launch-widget.vbs`（`wscript` → `WScript.Shell.Run`）而不是直接
+`spawn`：Windows 上直接创建的子进程会留在 Host 的作业对象/沙箱里，Host 退出时被一起带走；
+经 ShellExecute 启动的进程归外壳所有，才能真的留在桌面上。这也是挂件能活过 DSH 关闭的
+关键一环。
+
+## 排查
+
+- 鱼外面有白圈/白色方块：0.3.1 修。素材换成透明 PNG（`desktop/fish.png`），画布不再画
+  白色圆盘、描边和投影，鱼直接贴在桌面上；审批提醒改用右上角角标（`!` / ✓ / ✗），不再套
+  光环。
+- 进度「有延迟」：0.2.2 修。原来只有 800 ms 心跳 + 挂件 350 ms 轮询，事件到显示最多要
+  ~1.3 s；现在 Host 每收到一个会话事件就在 120 ms 内补写一次快照（突发会合并），挂件轮询
+  间隔降到 180 ms，事件到显示的实测延迟 ≈ **120 ms（写盘）+ 180 ms（读盘）+ ≤120 ms（绘制）
+  ≈ 0.3–0.4 s**。另外用户刚发消息时立刻把徽标切成「排队中」，不再把上一轮的「完成」多留
+  几秒。
+- 鱼不见了：`desktop\launch-widget.vbs` 双击即可重新拉起；仍在跑就在托盘右侧看
+  `powershell.exe`（窗口标题 `FatFishDesktop`，无任务栏按钮）。
+- 显示「DSH 未运行」：Host 超过 7 秒没写 `state.json`，通常是 DSH 关了或在重启；
+  DSH 起来后 1 秒内自动恢复。
+- 想彻底停掉：右键鱼 → 退出；再删掉启动文件夹里的 `FatFishDesktop.lnk`
+  （或跑 `desktop\uninstall-autostart.ps1`）。
+- 遗留 `state.json.*.tmp`：旧版本读写争用会留下临时文件；0.2.0 起挂件用共享方式读文件、
+  Host 写失败会自己清理，正常不会再出现（可用 `Remove-Item` 手动清一次）。
+- 拖动时抖动/闪烁：0.2.1 已修。拖动位移改为锚定**屏幕坐标**（客户端坐标会随窗口移动而
+  自我抵消，表现为拖一半、来回抖），移动只走一次 `SetWindowPos`（不再分别改 Left/Top、
+  也不再让渲染循环顺手挪窗），拖动期间暂停重绘，展开/收起时尺寸和位置一次性设置，并禁用
+  了 WinForms 自身的 `OnPaint`/`OnPaintBackground`（窗口内容只由分层的
+  `UpdateLayeredWindow` 提供，否则移动/改尺寸时会闪一下底色的白块）。
+
+## 开发
+
+```powershell
+# 只渲染预览图（浅色/深色 × 气泡/面板），不弹窗：
+powershell.exe -ExecutionPolicy Bypass -File desktop\FatFishDesktop.ps1 -SelfTest <输出目录>
+
+# 指定状态文件与配置目录（调试用，不碰 %LOCALAPPDATA%）：
+powershell.exe -ExecutionPolicy Bypass -File desktop\FatFishDesktop.ps1 `
+  -StatePath .\state.json -DataDir .\fishdata
+```
+
+注意：`FatFishDesktop.ps1` 必须保持 **纯 ASCII**（中文全在 `strings.json`），否则
+Windows PowerShell 5.1 会按 ANSI 解码导致乱码；`strings.json` 则以 UTF-8 显式读取。
+
+诊断时间线（事件 → 写盘 → 挂件读盘）可以打开 Host 侧的调试记录：在
+`%LOCALAPPDATA%\dsh-fat-fish\` 放一个空文件 `debug-on`，插件的每个会话事件和每次快照
+发布都会追加到同目录 `debug.log`；删掉 `debug-on` 即停止（默认不写任何日志）。
+
+## 已知边界
+
+- 只支持 **Windows**（WinForms + 分层窗口 API）；其它平台不启动挂件。
+- 挂件是置顶窗口，会盖住全屏游戏/全屏视频；需要时可右键退出或临时收起。
+- 进度读的是「最近活跃的会话」：多个会话同时跑时，面板会提示另有几个在跑，但只详细
+  展示最活跃那个。
+- 挂件本身不联网、不读会话日志，只读本机那个 `state.json`。
+
+## 更新记录
+
+- **0.3.2**（当前）：整体放大一圈——新增全局缩放 `$script:UiScale`（默认 `1.12`），
+  卡片、鱼、文字等比放大 12%（收起气泡 465×303 → 521×339）。开源到 GitHub。
+- **0.3.1**：去掉大肥鱼外面的白色圆圈/描边/投影，素材换成透明 PNG，鱼直接贴在桌面
+  上；审批提示改用右上角角标（`!` / ✓ / ✗），不再套光环。
+- **0.3.0**：审批提醒——有待审批项时气泡变琥珀色「需要你审批」，点卡片把 DSH 窗口
+  提到最前，新审批响提示音；审批有结果后闪 6 秒「已允许 / 已拒绝 / 已取消」确认。
+- **0.2.2**：进度延迟优化——Host 每个会话事件后 120 ms 内补写快照，挂件轮询降到
+  180 ms，事件到显示 ≈ 0.3–0.4 s；用户发消息立刻切「排队中」。
+- **0.2.1**：修拖动时闪烁——拖动锚定屏幕坐标、移动合并为一次 `SetWindowPos`、禁用
+  WinForms 自绘，拖动期间暂停重绘。
+- **0.2.0**：`state.json` 原子写 + 挂件共享读，消灭遗留 `*.tmp` 与读取冲突。
+- **0.1.0**：第一版桌面挂件：独立 WinForms 分层窗口，关掉 DSH 也留在桌面上。

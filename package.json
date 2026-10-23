@@ -1,0 +1,39 @@
+{
+  "name": "@local/dsh-fat-fish-widget",
+  "version": "0.3.2",
+  "private": true,
+  "description": "大肥鱼桌面挂件:一只常驻 Windows 桌面的悬浮鱼娘,始终置顶显示当前会话的轮次、步骤、工具调用、todo、后台任务与团队任务;关掉 DSH 窗口也不会消失。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "dsh-bundle",
+    "desktop",
+    "widget",
+    "progress",
+    "mascot"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.png"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.png",
+    "README.md",
+    "desktop/FatFishDesktop.ps1",
+    "desktop/strings.json",
+    "desktop/fish.png",
+    "desktop/launch-widget.vbs",
+    "desktop/install-autostart.ps1",
+    "desktop/uninstall-autostart.ps1"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
