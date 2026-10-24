@@ -33,9 +33,7 @@ dsh-widget/
 │   ├── FatFishDesktop.ps1        # 桌面挂件（Windows PowerShell 5.1，纯 ASCII 源码）
 │   ├── strings.json              # 全部中文文案（脚本按 UTF-8 读，避免代码页问题）
 │   ├── fish.png                  # 透明抠图
-│   ├── launch-widget.vbs         # 静默启动器（无黑框，可放启动文件夹）
-│   ├── install-autostart.ps1     # 注册开机自启
-│   └── uninstall-autostart.ps1   # 取消开机自启
+│   └── launch-widget.vbs         # 静默启动器（无黑框；由 Host 在 DSH 启动时调用）
 ├── assets/                       # 原图与抠图源文件
 ├── icon.png                      # 插件列表图标
 ├── locale/{zh,en}.json           # 插件管理里的标题与描述
@@ -96,11 +94,11 @@ DSH Host (index.js)
   改完重启挂件生效（右键 → 退出，再双击 `desktop\launch-widget.vbs`）。
 - **归位**：右键 → 回到默认位置（右下角，避开 `dsh-whale-widget` 的鲸鱼）。
 - **退出**：右键 → 退出；或结束进程 `powershell.exe`（窗口标题 `FatFishDesktop`）。
-- **开机自启**：`desktop\install-autostart.ps1` 会在
-  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\FatFishDesktop.lnk` 建一个
-  启动项（本机已装好），取消用 `desktop\uninstall-autostart.ps1`。有它之后即使不开 DSH，
-  登录桌面也能看到鱼（显示「DSH 未运行」）。
-- **立刻启动**：双击 `desktop\launch-widget.vbs`（无黑框）。
+- **随 DSH 启动**：0.3.3 起不再注册开机自启。挂件只在 **DSH 宿主（Host）加载本插件时**
+  由 `index.js` 在 1.5 秒内自动拉起——也就是说，**打开 DSH 就有鱼，DSH 没开就没有**。
+  挂件启动后仍独立于 DSH 存在：关掉 DSH 窗口鱼不会消失（显示「DSH 未运行」），
+  下次 DSH 启动时如鱼还在，插件加载会被单实例互斥锁忽略，不会叠出第二只。
+- **立刻启动**：双击 `desktop\launch-widget.vbs`（无黑框）；或直接把 DSH 打开。
 
 ## 审批提醒
 
@@ -144,8 +142,7 @@ Host 直接读这两类事件，**不拦截 `approval/request` 瀑布**（拦截
   `powershell.exe`（窗口标题 `FatFishDesktop`，无任务栏按钮）。
 - 显示「DSH 未运行」：Host 超过 7 秒没写 `state.json`，通常是 DSH 关了或在重启；
   DSH 起来后 1 秒内自动恢复。
-- 想彻底停掉：右键鱼 → 退出；再删掉启动文件夹里的 `FatFishDesktop.lnk`
-  （或跑 `desktop\uninstall-autostart.ps1`）。
+- 想彻底停掉：右键鱼 → 退出。挂件不会在下次登录时自己回来，只有再打开 DSH 才会重新拉起。
 - 遗留 `state.json.*.tmp`：旧版本读写争用会留下临时文件；0.2.0 起挂件用共享方式读文件、
   Host 写失败会自己清理，正常不会再出现（可用 `Remove-Item` 手动清一次）。
 - 拖动时抖动/闪烁：0.2.1 已修。拖动位移改为锚定**屏幕坐标**（客户端坐标会随窗口移动而
@@ -182,7 +179,11 @@ Windows PowerShell 5.1 会按 ANSI 解码导致乱码；`strings.json` 则以 UT
 
 ## 更新记录
 
-- **0.3.2**（当前）：整体放大一圈——新增全局缩放 `$script:UiScale`（默认 `1.12`），
+- **0.3.3**（当前）：取消开机自启——删除 `desktop/install-autostart.ps1` 与
+  `desktop/uninstall-autostart.ps1`，删掉启动文件夹里的 `FatFishDesktop.lnk`。
+  挂件改为**只在打开 DSH、Host 加载插件时自动拉起**（加载后 1.5 秒内）；
+  关掉 DSH 鱼仍留在桌面上，下次开 DSH 会复用同一只（单实例互斥）。
+- **0.3.2**：整体放大一圈——新增全局缩放 `$script:UiScale`（默认 `1.12`），
   卡片、鱼、文字等比放大 12%（收起气泡 465×303 → 521×339）。开源到 GitHub。
 - **0.3.1**：去掉大肥鱼外面的白色圆圈/描边/投影，素材换成透明 PNG，鱼直接贴在桌面
   上；审批提示改用右上角角标（`!` / ✓ / ✗），不再套光环。

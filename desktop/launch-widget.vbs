@@ -1,6 +1,7 @@
-' launch-widget.vbs - silent launcher for the 大肥鱼 desktop widget.
-' Starts the widget through Windows PowerShell without flashing a console window,
-' so it can be dropped into the Startup folder for auto-run at login.
+' launch-widget.vbs - silent launcher for the fat fish desktop widget.
+' Started by the Host half (index.js) when DSH opens; it also works when double
+' clicked by hand. WScript.Shell.Run keeps the widget out of the Host's job
+' object, so the fish stays on the desktop after DSH is closed.
 Option Explicit
 On Error Resume Next
 

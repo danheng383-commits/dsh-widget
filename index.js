@@ -23,7 +23,7 @@
  */
 
 const PROGRESS_PATH = '/api/fat-fish/progress'
-const PLUGIN_VERSION = '0.3.2'
+const PLUGIN_VERSION = '0.3.3'
 const API_VERSION = 1
 
 const MAX_SESSIONS = 12
@@ -1135,14 +1135,16 @@ function desktopWidgetScript() {
 let widgetLaunchAttempted = false
 
 /**
- * Start the desktop mascot once per plugin load.
+ * Start the desktop mascot once per Host load (0.3.3: this is the ONLY start path).
  *
- * The widget must outlive the Host, so it is started through desktop/launch-widget.vbs
- * (wscript → WScript.Shell.Run). That indirection matters on Windows: a directly
+ * 0.3.2 and earlier also offered a login autostart shortcut; that is gone, so the
+ * widget's lifetime now begins whenever DSH opens and loads this bundle. The fish
+ * still outlives the Host: it is started through desktop/launch-widget.vbs
+ * (wscript → WScript.Shell.Run) rather than spawned directly, because a directly
  * spawned child inherits the Host's job object / sandbox and is torn down with it,
  * while ShellExecute-launched processes are owned by the shell and keep running.
- * The widget itself also holds a single-instance mutex, so repeated plugin reloads
- * never stack fish.
+ * The widget itself also holds a single-instance mutex, so a plugin reload while the
+ * previous fish is still on the desktop never stacks a second one.
  */
 function launchDesktopWidget() {
   if (widgetLaunchAttempted) return
