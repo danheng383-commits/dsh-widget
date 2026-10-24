@@ -23,7 +23,8 @@ param(
     [string]$AssetPath = '',
     [string]$TextPath = '',
     [string]$SelfTest = '',
-    [int]$ExitAfterMs = 0
+    [int]$ExitAfterMs = 0,
+    [string]$AutostartTest = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -229,7 +230,7 @@ if (-not $script:Sep) { $script:Sep = ' / ' }
 
 # -------------------------------------------------------------- single app ---
 $script:Mutex = New-Object System.Threading.Mutex($false, 'Local\DshFatFishDesktopWidget')
-if (-not $SelfTest -and -not $script:Mutex.WaitOne(0)) { exit 0 }
+if (-not $SelfTest -and -not $AutostartTest -and -not $script:Mutex.WaitOne(0)) { exit 0 }
 
 foreach ($dir in @($DataDir, (Split-Path -Parent $StatePath))) {
     if ($dir) {
@@ -293,6 +294,8 @@ $script:WinH = 0
 $script:Expanded = $false
 $script:ScaleIndex = 1
 $script:ScaleFactors = @(0.86, 1.0, 1.16)
+$script:KeepAfterExit = $true
+$script:SawFresh = $false
 $script:State = $null
 $script:LastStateRaw = ''
 $script:LastPoll = 0
@@ -333,6 +336,7 @@ function Read-Config {
     $script:Expanded = $false
     $script:ScaleIndex = 1
     $script:AlertSound = $true
+    $script:KeepAfterExit = $true
     Get-DefaultPos
     if (Test-Path -LiteralPath $script:ConfigPath) {
         try {
@@ -342,6 +346,7 @@ function Read-Config {
             if ($cfg.expanded -ne $null) { $script:Expanded = [bool]$cfg.expanded }
             if ($cfg.scale -ne $null) { $script:ScaleIndex = [Math]::Max(0, [Math]::Min(2, [int]$cfg.scale)) }
             if ($cfg.alertSound -ne $null) { $script:AlertSound = [bool]$cfg.alertSound }
+            if ($cfg.keepAfterExit -ne $null) { $script:KeepAfterExit = [bool]$cfg.keepAfterExit }
         } catch { }
     }
 }
@@ -349,17 +354,69 @@ function Read-Config {
 function Save-Config {
     try {
         $obj = [ordered]@{
-            x          = $script:Form.Left
-            y          = $script:Form.Top
-            expanded   = $script:Expanded
-            scale      = $script:ScaleIndex
-            alertSound = $script:AlertSound
+            x             = $script:Form.Left
+            y             = $script:Form.Top
+            expanded      = $script:Expanded
+            scale         = $script:ScaleIndex
+            alertSound    = $script:AlertSound
+            keepAfterExit = $script:KeepAfterExit
         }
         $tmp = $script:ConfigPath + '.tmp'
         [System.IO.File]::WriteAllText($tmp, ($obj | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
         if (Test-Path -LiteralPath $script:ConfigPath) { Remove-Item -LiteralPath $script:ConfigPath -Force }
         Move-Item -LiteralPath $tmp -Destination $script:ConfigPath -Force
     } catch { }
+}
+
+# ------------------------------------------------------------- login start ---
+# The user can opt into starting the fish at login from the right-click menu.
+# The Startup shortcut itself is the source of truth (widget.json is not
+# consulted for this), so a manually deleted shortcut also clears the tick.
+
+function Get-StartupLinkPath {
+    $startup = [Environment]::GetFolderPath('Startup')
+    if (-not $startup) { $startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup' }
+    return (Join-Path $startup 'FatFishDesktop.lnk')
+}
+
+function Test-Autostart {
+    try { return (Test-Path -LiteralPath (Get-StartupLinkPath)) } catch { return $false }
+}
+
+function Set-Autostart([bool]$on) {
+    $link = Get-StartupLinkPath
+    if (-not $on) {
+        try { if (Test-Path -LiteralPath $link) { Remove-Item -LiteralPath $link -Force } } catch { }
+        return
+    }
+    $vbs = Join-Path $PSScriptRoot 'launch-widget.vbs'
+    if (-not (Test-Path -LiteralPath $vbs)) { return }
+    $wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    $shell = $null
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($link)
+        $shortcut.TargetPath = $wscript
+        $shortcut.Arguments = '"' + $vbs + '"'
+        $shortcut.WorkingDirectory = $PSScriptRoot
+        $shortcut.Description = 'FatFishDesktop'
+        $shortcut.WindowStyle = 7
+        $shortcut.Save()
+    } catch { } finally {
+        if ($shell -ne $null) { try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) } catch { } }
+    }
+}
+
+if ($AutostartTest -ne '') {
+    # Dev flag: `-AutostartTest query|on|off` toggles the Startup shortcut from a
+    # console and exits, so the shortcut logic is testable without the GUI.
+    switch ($AutostartTest.ToLowerInvariant()) {
+        'on' { Set-Autostart $true }
+        'off' { Set-Autostart $false }
+        default { }
+    }
+    if (Test-Autostart) { Write-Output 'autostart=on' } else { Write-Output 'autostart=off' }
+    exit 0
 }
 
 function Read-StateRaw {
@@ -576,11 +633,13 @@ function Get-StatsLine($active) {
     return ($stats -join $script:Sep)
 }
 
+function Get-StateAge {
+    if ($script:State -eq $null -or $script:State.writtenAt -eq $null) { return [double]::MaxValue }
+    return [double]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [double]$script:State.writtenAt)
+}
+
 function Get-StatusInfo {
-    $age = [double]::MaxValue
-    if ($script:State -ne $null -and $script:State.writtenAt -ne $null) {
-        $age = [double]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [double]$script:State.writtenAt)
-    }
+    $age = Get-StateAge
     $active = Get-Active
     $info = @{ phase = 'idle'; status = ''; sub = ''; stats = ''; percent = $null; animate = $false; tone = 'idle'; doneFlash = $false; alert = $false; toast = $false; approval = $null; approvalCount = 0 }
     $info.doneFlash = ([Environment]::TickCount -lt $script:DoneUntil)
@@ -636,6 +695,16 @@ function Get-StatusInfo {
     }
     $phase = [string]$active.phase
     if ($phase -eq '') { $phase = 'idle' }
+    # "done" is a moment, not a mode: once the turn has been quiet for a while,
+    # fall back to idle instead of parking on the finished turn (that stale
+    # badge is what made a new task look like it had not been picked up yet).
+    if ($phase -eq 'done' -and $active.running -ne $true) {
+        $quiet = [double]::MaxValue
+        if ($active.lastEventAt -ne $null) {
+            $quiet = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [double]$active.lastEventAt
+        }
+        if ($quiet -gt 10000) { $phase = 'idle' }
+    }
     $info.phase = $phase
     if ($info.doneFlash) {
         $info.status = [string]$script:S.labels.doneToast
@@ -1063,6 +1132,10 @@ $script:MiLarge = New-Object System.Windows.Forms.ToolStripMenuItem
 [void]$script:Menu.Items.Add($script:MiSize)
 $script:MiSound = New-Object System.Windows.Forms.ToolStripMenuItem
 [void]$script:Menu.Items.Add($script:MiSound)
+$script:MiAutostart = New-Object System.Windows.Forms.ToolStripMenuItem
+[void]$script:Menu.Items.Add($script:MiAutostart)
+$script:MiKeep = New-Object System.Windows.Forms.ToolStripMenuItem
+[void]$script:Menu.Items.Add($script:MiKeep)
 $script:MiReset = $script:Menu.Items.Add('')
 [void]$script:Menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $script:MiQuit = $script:Menu.Items.Add('')
@@ -1078,6 +1151,10 @@ function Update-MenuText {
     $script:MiLarge.Checked = ($script:ScaleIndex -eq 2)
     $script:MiSound.Text = [string]$script:S.labels.alertSound
     $script:MiSound.Checked = [bool]$script:AlertSound
+    $script:MiAutostart.Text = [string]$script:S.labels.autostart
+    $script:MiAutostart.Checked = (Test-Autostart)
+    $script:MiKeep.Text = [string]$script:S.labels.keepRunning
+    $script:MiKeep.Checked = [bool]$script:KeepAfterExit
     $script:MiReset.Text = [string]$script:S.labels.reset
     $script:MiQuit.Text = [string]$script:S.labels.quit
 }
@@ -1098,6 +1175,18 @@ $script:MiSound.Add_Click({
         $script:AlertSound = -not $script:AlertSound
         Save-Config
         if ($script:AlertSound) { try { [System.Media.SystemSounds]::Asterisk.Play() } catch { } }
+    })
+$script:MiAutostart.Add_Click({
+        param($s, $e)
+        # Re-read the shortcut every time: it is the source of truth, so toggling
+        # never drifts from what Windows will actually do at the next login.
+        Set-Autostart (-not (Test-Autostart))
+        $script:NeedsRender = $true
+    })
+$script:MiKeep.Add_Click({
+        param($s, $e)
+        $script:KeepAfterExit = -not $script:KeepAfterExit
+        Save-Config
     })
 $script:MiReset.Add_Click({
         param($s, $e)
@@ -1217,10 +1306,18 @@ if ($ExitAfterMs -gt 0) { $exitAt = [Environment]::TickCount + $ExitAfterMs }
 while ($script:Running) {
     [System.Windows.Forms.Application]::DoEvents()
     $nowTick = [Environment]::TickCount
-    if (($nowTick - $script:LastPoll) -ge 180) {
+    if (($nowTick - $script:LastPoll) -ge 100) {
         Poll-State
         $script:LastPoll = $nowTick
         $script:StatusInfo = Get-StatusInfo
+        # Honour the "keep the fish after DSH quits" choice, but only once this
+        # run has actually seen a live Host: a widget started at login (autostart)
+        # must wait for DSH instead of quitting on a stale snapshot.
+        $stateAge = Get-StateAge
+        if ($stateAge -lt 7000) { $script:SawFresh = $true }
+        if (-not $script:KeepAfterExit -and $script:SawFresh -and $stateAge -gt 30000) {
+            $script:Running = $false
+        }
     }
     $frameInterval = 55
     if (-not $script:StatusInfo.animate) { $frameInterval = 120 }

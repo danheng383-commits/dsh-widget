@@ -23,7 +23,7 @@
  */
 
 const PROGRESS_PATH = '/api/fat-fish/progress'
-const PLUGIN_VERSION = '0.3.3'
+const PLUGIN_VERSION = '0.4.0'
 const API_VERSION = 1
 
 const MAX_SESSIONS = 12
@@ -252,6 +252,10 @@ function newState(id) {
     lastApproval: null,
     agent: null,
     agentStatus: null,
+    // True when the user sent a message while a turn was still running: the
+    // turn/end handler flips straight to "queued" so the widget never parks on
+    // the previous turn's "完成" while the follow-up waits its turn.
+    pendingUserMessage: false,
   }
 }
 
@@ -271,6 +275,14 @@ function handleTurnEnd(state, data) {
   if (kind.includes('error') || kind.includes('fail')) state.phase = 'error'
   else if (kind.includes('abort') || kind.includes('cancel') || kind.includes('interrupt')) state.phase = 'idle'
   else state.phase = 'done'
+  // A message the user queued mid-turn starts the next turn right away; showing
+  // "完成" in that gap is what made the widget look frozen. Report "queued"
+  // instead, so the badge matches what DSH is about to do.
+  if (state.pendingUserMessage && state.phase === 'done') {
+    state.phase = 'queued'
+    state.running = true
+    state.pendingUserMessage = false
+  }
 }
 
 /** Fold one session event into the per-session state (idempotent by `seq`). */
@@ -297,6 +309,7 @@ function foldEvent(state, event) {
       state.currentTool = null
       state.step = null
       state.approvals = []
+      state.pendingUserMessage = false
       break
 
     case 'turn/end':
@@ -410,12 +423,15 @@ function foldEvent(state, event) {
       }
       // A user message means a turn is about to start. Flip the badge right
       // away instead of leaving the previous turn's "完成" up while the agent
-      // boots (that gap read as lag). Mid-turn steering messages are ignored
-      // because the phase is already active then.
+      // boots (that gap read as lag).
       if (!ACTIVE_PHASES.has(state.phase)) {
         state.running = true
         state.phase = 'queued'
         state.currentTool = null
+      } else {
+        // Mid-turn steering: the agent keeps working, but remember the queued
+        // message so turn/end can report "排队中…" instead of "完成".
+        state.pendingUserMessage = true
       }
       break
     }
@@ -1044,22 +1060,35 @@ function publishDesktopState(ctx) {
 /**
  * Event-driven snapshot pushes: waiting for the 800 ms heartbeat made fresh
  * steps show up noticeably late on the desktop widget, so every session event
- * schedules an extra publish ~120 ms later (coalesced, so bursts stay cheap).
+ * schedules an extra publish a few dozen ms later (coalesced, so bursts stay
+ * cheap). Turn boundaries (and user messages / agent status flips) are pushed
+ * with zero delay: those flip the whole badge, and any wait at all reads as a
+ * frozen widget.
  */
 let publishSoonTimer = null
+let publishSoonDelay = 0
 
-function schedulePublish(ctx) {
+/** Events that change the badge itself; publish them without debouncing. */
+const IMMEDIATE_EVENTS = new Set(['turn/start', 'turn/end', 'user/message'])
+
+function schedulePublish(ctx, delay = 60) {
   try {
     if (typeof setTimeout !== 'function') return
-    if (publishSoonTimer !== null) return
+    if (publishSoonTimer !== null) {
+      if (delay >= publishSoonDelay) return
+      clearTimeout(publishSoonTimer)
+      publishSoonTimer = null
+    }
+    publishSoonDelay = delay
     publishSoonTimer = setTimeout(() => {
       publishSoonTimer = null
+      publishSoonDelay = 0
       try {
         publishDesktopState(ctx)
       } catch {
         /* ignore */
       }
-    }, 120)
+    }, delay)
     if (publishSoonTimer && typeof publishSoonTimer.unref === 'function') publishSoonTimer.unref()
   } catch {
     /* ignore */
@@ -1219,12 +1248,12 @@ export function apply(ctx) {
       // Push a fresh snapshot right away: waiting for the 800 ms heartbeat made
       // new steps/tools show up noticeably late on the desktop widget. The
       // scheduler coalesces bursts, so even chatty sessions cost at most one
-      // extra write per ~120 ms.
-      schedulePublish(ctx)
+      // extra write per ~60 ms. Turn boundaries skip the debounce entirely.
+      schedulePublish(ctx, IMMEDIATE_EVENTS.has(type) ? 0 : 60)
     })
     listen('agent/status', (payload) => {
       handleAgentStatus(store, payload)
-      schedulePublish(ctx)
+      schedulePublish(ctx, 0)
     })
     listen('agent/disposed', (payload) => handleAgentDisposed(store, payload))
     listen('session/disposed', (session) => handleSessionDisposed(store, session))
